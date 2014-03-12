@@ -22,7 +22,7 @@ Usage: preev AMOUNT [-t|--to CURRENCY] [-s|--source EXCHANGES] [-v|--verbose]
 Available options:
   -h,--help                Show this help text
   -t,--to CURRENCY         Target currency (e.g. USD, EUR, SEK, NOK) defaults to USD
-  -s,--source EXCHANGES    Comma spearated (no whitespaces) list of sources (e.g. bitstamp,btce)
+  -s,--source EXCHANGES    Comma separated (no whitespaces) list of sources (e.g. bitstamp,btce)
   -v,--verbose             Enable verbose mode
 
 ~ $ preev 0.24 --verbose
