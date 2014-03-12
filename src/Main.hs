@@ -57,7 +57,7 @@ cmdParser = Arguments <$>
             strOption (long   "source"
                     <> short  's'
                     <> metavar "EXCHANGES"
-                    <> help    "Comma spearated (no whitespaces) list of sources (e.g. bitstamp,btce)"
+                    <> help    "Comma separated (no whitespaces) list of sources (e.g. bitstamp,btce)"
                     <> value (intercalate "," defaultSources)) <*>
 
             -- be annoyingly noisy please
