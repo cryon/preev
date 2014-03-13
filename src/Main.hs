@@ -41,6 +41,12 @@ type Verbose  = Bool
 
 data Arguments = Arguments Amount Currency Source Verbose
 
+currency :: Arguments -> Currency
+currency (Arguments _ c _ _) = map toUpper c
+
+source :: Arguments -> Source
+source (Arguments _ _ s _) = s
+
 cmdParser :: Parser Arguments
 cmdParser = Arguments <$>
             -- amount in btc
@@ -50,14 +56,16 @@ cmdParser = Arguments <$>
             strOption (long    "to"
                     <> short   't'
                     <> metavar "CURRENCY"
-                    <> help    "Target currency (e.g. USD, EUR, SEK, NOK) defaults to USD"
+                    <> help    "Target currency (e.g. USD, EUR, SEK, NOK) \
+                                \defaults to USD"
                     <> value   defaultCurrency) <*>
 
             -- exchanges to use
             strOption (long   "source"
                     <> short  's'
                     <> metavar "EXCHANGES"
-                    <> help    "Comma separated (no whitespaces) list of sources (e.g. bitstamp,btce)"
+                    <> help    "Comma separated (no whitespaces) \
+                               \list of sources (e.g. bitstamp,btce)"
                     <> value (intercalate "," defaultSources)) <*>
 
             -- be annoyingly noisy please
@@ -71,9 +79,9 @@ baseUrl :: String
 baseUrl = "http://preev.com/pulse"
 
 buildUrl :: Source -> Currency -> String
-buildUrl source to = baseUrl ++ sourcesParam ++ unitParam
-  where sourcesParam = "/source:"   ++ source
-        unitParam    = "/unit:btc," ++ to
+buildUrl s c = baseUrl ++ sourcesParam ++ unitParam
+  where sourcesParam = "/source:"   ++ s
+        unitParam    = "/unit:btc," ++ c
 
 getData :: String -> IO B.ByteString
 getData = simpleHttp
@@ -94,7 +102,8 @@ instance FromJSON Market where
                          (read <$> o .: "vol")
   parseJSON _ = mzero
 
-type MarketsObj = M.Map String Market
+type Name       = String
+type MarketsObj = M.Map Name Market
 type Version    = String
 type Slot       = Int
 
@@ -107,47 +116,54 @@ instance FromJSON Response where
                          (o .: "slot")
   parseJSON _ = mzero
 
-getMarkets :: Response -> [Market]
-getMarkets (Response m _ _) = map snd $ M.toList m
+namedMarkets :: Response -> [(Name, Market)]
+namedMarkets (Response mo _ _) = M.toList mo
+
+markets :: Response -> [Market]
+markets r = map snd $ namedMarkets r
 
 -- Verbose stuff ---------------------------------------------------------------
 
-marketString :: String -> String -> Market -> String
-marketString n c m = printf "1 BTC = %.2f %s on %s" (price m) c n
+marketString :: Currency -> (Name, Market) -> String
+marketString c (n, m) = printf "1 BTC = %.2f %s on %s" (price m) c n
 
-marketsString :: Response -> String -> String
-marketsString (Response mo _ _) curr = intercalate "\n" $ map marketStrAcc pairs
-  where pairs = M.toList mo
-        marketStrAcc (n, m) = marketString n curr m
+marketsString :: Response -> Currency -> String
+marketsString r c = intercalate "\n" $ map (marketString c) (namedMarkets r)
 
-resultString :: Double -> Double -> String -> String
-resultString =
-  printf "\n-------\n%.2f BTC are on average (weighted by volume) worth %.2f %s"
+resultString :: Amount -> Double -> Currency -> String
+resultString = printf "\n-----\n%.2f BTC are on average (weighted by volume) \
+                       \worth %.2f %s"
+
+responseString :: Arguments -> Response  -> String
+responseString (Arguments amount to _ verbose) r
+  | verbose   = (marketsString r curr) ++ (resultString amount res curr)
+  | otherwise = printf "%.2f\n" res
+  where curr = map toUpper to
+        res  = totalValue amount r
 
 -- Get things done! ------------------------------------------------------------
 
-totalVolume :: [Market] -> Double
+totalVolume :: [Market] -> Volume
 totalVolume = foldl (\acc m -> acc + volume m) 0
 
-avgPrice :: [Market] -> Double
+avgPrice :: [Market] -> Price
 avgPrice ms = foldl (\acc m -> acc + (price m) * (volume m) / totalVol) 0 ms
   where totalVol = totalVolume ms
 
+totalValue :: Amount -> Response -> Price
+totalValue a r = a * (avgPrice $ markets r)
+
 execute :: Arguments -> IO ()
-execute (Arguments amount to source verbose) = do
-    json <- getData $ buildUrl source to
-    printResult $ decode json
-    where
-      printResult Nothing = putStrLn "Error while parsing result. Call the cops!"
-      printResult (Just r)
-        | verbose   = putStrLn $ (marketsString r curr) ++ (resultString amount result curr)
-        | otherwise = printf "%.2f\n" result
-        where result = amount * (avgPrice $ getMarkets r)
-              curr = map toUpper to
+execute a = do
+    json   <- getData $ buildUrl (source a) (currency a)
+    putStrLn $ case decode json of
+      Nothing -> "Error while parsing result. Call the cops!"
+      Just r  -> responseString a r
 
 main :: IO ()
 main = execParser opts >>= execute
   where opts = info (helper <*> cmdParser)
           (fullDesc
-           <> header "Gets the average market price for any amount of BTC from several exchanges weighted by volume"
+           <> header "Gets the average market price for any amount of BTC \
+                     \from several exchanges weighted by volume"
            <> progDesc "Average market price for AMOUNT bitcoins")
