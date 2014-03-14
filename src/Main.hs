@@ -39,37 +39,35 @@ type Currency = String
 type Source   = String
 type Verbose  = Bool
 
-data Arguments = Arguments Amount Currency Source Verbose
-
-currency :: Arguments -> Currency
-currency (Arguments _ c _ _) = map toUpper c
-
-source :: Arguments -> Source
-source (Arguments _ _ s _) = s
+data Arguments = Arguments { amount   :: Amount
+                           , currency :: Currency
+                           , source   :: Source
+                           , verbose  :: Verbose
+                           }
 
 cmdParser :: Parser Arguments
-cmdParser = Arguments <$>
+cmdParser = Arguments
             -- amount in btc
-            argument auto (metavar "AMOUNT") <*>
+            <$> argument auto (metavar "AMOUNT")
 
             -- target currency
-            strOption (long    "to"
+            <*> strOption (long    "to"
                     <> short   't'
                     <> metavar "CURRENCY"
                     <> help    "Target currency (e.g. USD, EUR, SEK, NOK) \
                                 \defaults to USD"
-                    <> value   defaultCurrency) <*>
+                    <> value   defaultCurrency)
 
             -- exchanges to use
-            strOption (long   "source"
+            <*> strOption (long   "source"
                     <> short  's'
                     <> metavar "EXCHANGES"
                     <> help    "Comma separated (no whitespaces) \
                                \list of sources (e.g. bitstamp,btce)"
-                    <> value (intercalate "," defaultSources)) <*>
+                    <> value (intercalate "," defaultSources))
 
             -- be annoyingly noisy please
-            switch (long  "verbose"
+            <*> switch (long  "verbose"
                  <> short 'v'
                  <> help  "Enable verbose mode")
 
@@ -97,9 +95,9 @@ data Market = Market { price  :: Price
 
 -- TODO: 'readMaybe' instead of the partial 'read'
 instance FromJSON Market where
-  parseJSON (Object o) = Market <$>
-                         (read <$> o .: "price") <*>
-                         (read <$> o .: "vol")
+  parseJSON (Object o) = Market
+                         <$> (read <$> o .: "price")
+                         <*> (read <$> o .: "vol")
   parseJSON _ = mzero
 
 type Name       = String
@@ -110,10 +108,10 @@ type Slot       = Int
 data Response = Response MarketsObj Version Slot deriving (Show)
 
 instance FromJSON Response where
-  parseJSON (Object o) = Response <$>
-                         (o .: "markets" >>= parseJSON) <*>
-                         (o .: "ver") <*>
-                         (o .: "slot")
+  parseJSON (Object o) = Response
+                         <$> (o .: "markets" >>= parseJSON)
+                         <*> (o .: "ver")
+                         <*> (o .: "slot")
   parseJSON _ = mzero
 
 namedMarkets :: Response -> [(Name, Market)]
@@ -134,12 +132,11 @@ resultString :: Amount -> Double -> Currency -> String
 resultString = printf "\n-----\n%.2f BTC are on average (weighted by volume) \
                        \worth %.2f %s"
 
-responseString :: Arguments -> Response  -> String
-responseString (Arguments amount to _ verbose) r
-  | verbose   = (marketsString r curr) ++ (resultString amount res curr)
+responseString :: Arguments -> Response -> Price -> String
+responseString a r res
+  | verbose a = (marketsString r curr) ++ (resultString (amount a) res curr)
   | otherwise = printf "%.2f\n" res
-  where curr = map toUpper to
-        res  = totalValue amount r
+  where curr = map toUpper $ currency a
 
 -- Get things done! ------------------------------------------------------------
 
@@ -158,7 +155,7 @@ execute a = do
     json   <- getData $ buildUrl (source a) (currency a)
     putStrLn $ case decode json of
       Nothing -> "Error while parsing result. Call the cops!"
-      Just r  -> responseString a r
+      Just r  -> responseString a r $ totalValue (amount a) r
 
 main :: IO ()
 main = execParser opts >>= execute
