@@ -17,14 +17,16 @@
 -}
 
 import Data.Char (toUpper)
+import Data.Text (unpack)
 import Text.Printf (printf)
 import Options.Applicative
 import Control.Monad (mzero)
 import Data.List (intercalate)
+import Data.HashMap.Strict (toList)
 import Network.HTTP.Conduit (simpleHttp)
 import Data.Aeson (decode, FromJSON(..), Value(..), (.:))
+import qualified Data.Aeson.Types as AT
 import qualified Data.ByteString.Lazy.Char8 as B
-import qualified Data.Map as M
 
 -- Parse Arguments -------------------------------------------------------------
 
@@ -52,24 +54,24 @@ cmdParser = Arguments
 
             -- target currency
             <*> strOption (long    "to"
-                    <> short   't'
-                    <> metavar "CURRENCY"
-                    <> help    "Target currency (e.g. USD, EUR, SEK, NOK) \
-                                \defaults to USD"
-                    <> value   defaultCurrency)
+                        <> short   't'
+                        <> metavar "CURRENCY"
+                        <> help    "Target currency (e.g. USD, EUR, SEK, NOK) \
+                                   \defaults to USD"
+                        <> value   defaultCurrency)
 
-            -- exchanges to use
-            <*> strOption (long   "source"
-                    <> short  's'
-                    <> metavar "EXCHANGES"
-                    <> help    "Comma separated (no whitespaces) \
-                               \list of sources (e.g. bitstamp,btce)"
-                    <> value (intercalate "," defaultSources))
+             -- exchanges to use
+             <*> strOption (long   "source"
+                        <> short  's'
+                        <> metavar "EXCHANGES"
+                        <> help    "Comma separated (no whitespaces) \
+                                   \list of sources (e.g. bitstamp,btce)"
+                        <> value (intercalate "," defaultSources))
 
-            -- be annoyingly noisy please
-            <*> switch (long  "verbose"
-                 <> short 'v'
-                 <> help  "Enable verbose mode")
+             -- be annoyingly noisy please
+             <*> switch (long  "verbose"
+                        <> short 'v'
+                        <> help  "Enable verbose mode")
 
 -- Make request ----------------------------------------------------------------
 
@@ -88,53 +90,53 @@ getData = simpleHttp
 
 type Volume = Double
 type Price  = Double
+type Name   = String
 
-data Market = Market { price  :: Price
+data Market = Market { name   :: Name
                      , volume :: Volume
+                     , price  :: Price
                      } deriving (Show)
 
--- TODO: 'readMaybe' instead of the partial 'read'
-instance FromJSON Market where
-  parseJSON (Object o) = Market
-                         <$> (read <$> o .: "price")
-                         <*> (read <$> o .: "vol")
-  parseJSON _ = mzero
+type Version = String
+type Slot    = Int
 
-type Name       = String
-type MarketsObj = M.Map Name Market
-type Version    = String
-type Slot       = Int
-
-data Response = Response MarketsObj Version Slot deriving (Show)
-
-instance FromJSON Response where
-  parseJSON (Object o) = Response
-                         <$> (o .: "markets" >>= parseJSON)
-                         <*> (o .: "ver")
-                         <*> (o .: "slot")
-  parseJSON _ = mzero
-
-namedMarkets :: Response -> [(Name, Market)]
-namedMarkets (Response mo _ _) = M.toList mo
+data Response = Response [Market] Version Slot deriving (Show)
 
 markets :: Response -> [Market]
-markets r = map snd $ namedMarkets r
+markets (Response ms _ _) = ms
+
+instance FromJSON Response where
+  parseJSON (Object o) =
+    Response
+    <$> (o .: "markets" >>= parseMarkets)
+    <*> (o .: "ver")
+    <*> (o .: "slot")
+  parseJSON _ = mzero
+
+parseMarkets :: Value -> AT.Parser [Market]
+parseMarkets (Object o) = do
+  sequence $ map parseMarketObj $ toList o
+  where parseMarketObj (k, (Object v)) =
+  -- TODO: 'readMaybe' instead of the partial 'read'
+          Market <$> (pure $ unpack k)
+                 <*> (read <$> v .: "vol")
+                 <*> (read <$> v .: "price")
 
 -- Verbose stuff ---------------------------------------------------------------
 
-marketString :: Currency -> (Name, Market) -> String
-marketString c (n, m) = printf "1 BTC = %.2f %s on %s" (price m) c n
+marketString :: Market -> Currency -> String
+marketString m c = printf "1 BTC = %.2f %s on %s" (price m) c (name m)
 
-marketsString :: Response -> Currency -> String
-marketsString r c = intercalate "\n" $ map (marketString c) (namedMarkets r)
+marketsString :: [Market] -> Currency -> String
+marketsString ms c = intercalate "\n" $ map (flip marketString c) ms
 
 resultString :: Amount -> Double -> Currency -> String
 resultString = printf "\n-----\n%.2f BTC are on average (weighted by volume) \
                        \worth %.2f %s"
 
-responseString :: Arguments -> Response -> Price -> String
-responseString a r res
-  | verbose a = (marketsString r curr) ++ (resultString (amount a) res curr)
+responseString :: [Market] -> Arguments -> Price -> String
+responseString ms a res
+  | verbose a = (marketsString ms curr) ++ (resultString (amount a) res curr)
   | otherwise = printf "%.2f\n" res
   where curr = map toUpper $ currency a
 
@@ -147,15 +149,15 @@ avgPrice :: [Market] -> Price
 avgPrice ms = foldl (\acc m -> acc + (price m) * (volume m) / totalVol) 0 ms
   where totalVol = totalVolume ms
 
-totalValue :: Amount -> Response -> Price
-totalValue a r = a * (avgPrice $ markets r)
+totalValue :: [Market] -> Amount -> Price
+totalValue ms a = a * avgPrice ms
 
 execute :: Arguments -> IO ()
 execute a = do
     json   <- getData $ buildUrl (source a) (currency a)
     putStrLn $ case decode json of
       Nothing -> "Error while parsing result. Call the cops!"
-      Just r  -> responseString a r $ totalValue (amount a) r
+      Just r  -> responseString (markets r) a $ totalValue (markets r) (amount a)
 
 main :: IO ()
 main = execParser opts >>= execute

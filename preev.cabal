@@ -20,4 +20,5 @@ executable preev
                        bytestring == 0.10.*,
                        aeson == 0.7.*,
                        containers == 0.5.*,
-                       text == 1.1.*
+                       text == 1.1.*,
+                       unordered-containers == 0.2.*

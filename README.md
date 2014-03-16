@@ -13,7 +13,7 @@ sane.
 Usage
 =====
 ```
-~$ preev --help
+~ $ preev --help
 Gets the average market price for any amount of BTC from several exchanges weighted by volume
 
 Usage: preev AMOUNT [-t|--to CURRENCY] [-s|--source EXCHANGES] [-v|--verbose]
